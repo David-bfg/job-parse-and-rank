@@ -225,4 +225,4 @@ def mongo_connect():
     pprint(job_post_word_count[-600:])
 
 if __name__ == "__main__":
-mongo_connect()
+    mongo_connect()

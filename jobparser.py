@@ -7,7 +7,8 @@ from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
 
 CONNECTION_STRING = "mongodb://<user>:<pass>@<host>/<DBName>"
-IGNORED_WORDS = ["senior", "sr", "/", "&", "mission", "it", "and", "of", "mn", "in", "a"]
+STOP_WORDS = stopwords.words('english')
+IGNORED_WORDS = ["senior", "sr", "/", "&", "mission", "it", "and", "of", "mn", "in", "a"] + STOP_WORDS
 BAD_PHRASES = [
  'salesforce', 'salesforce developer', 'salesforce devops admin',
  'manager', 'engineering manager',
@@ -134,95 +135,142 @@ GOOD_SKILLS = [
  'kafka', 
  'ansible', 
 ]
+SKILLS = set(GOOD_SKILLS + NEUTRAL_SKILLS + BAD_SKILLS)
 
 def occurrence_cutoff(phrase, phrase_count, jobs_count):
     if phrase_count == 1:
         return False
 
     match len(phrase.split()):
-        case 1:
+        case 1: # 1%
             return phrase_count / jobs_count >= 0.01
         case 2:
             return phrase_count / jobs_count >= 0.01
-        case 3:
+        case 3: # 0.5%
             return phrase_count / jobs_count >= 0.005
         case 4:
             return phrase_count / jobs_count >= 0.005
 
     return False
 
+# Define the regular expression pattern for tokenization
+title_pattern = r"\s*[-,()]+\s*|\s*\.\s+|\s*\.$"
 
-def mongo_connect():
+# Create a RegexpTokenizer with the defined pattern
+TITLE_TOKENIZER = RegexpTokenizer(title_pattern, True)
+
+def parse_job_titles_by_phrases(job_title):
+    positionTokenSplit = TITLE_TOKENIZER.tokenize(job_title)
+    phrases = set()
+    for token in positionTokenSplit:
+        words = token.lower().split()
+        words = list(filter(lambda x: x not in IGNORED_WORDS, words))
+        for i in range(len(words)):
+            for j in range(1, min(5, len(words) - i + 1)): # Consider phrases of length 1 to 4 words
+                phrase = ' '.join(words[i:i+j])
+                phrases.add(phrase)
+
+    return phrases
+
+# Define the regular expression pattern for tokenization
+post_pattern = r"\s*[-/,();:&]+\s*|\s*[!?.]$"
+
+# Create a RegexpTokenizer with the defined pattern
+POST_TOKENIZER = RegexpTokenizer(post_pattern, True)
+
+def parse_job_posts_by_skills(job_post):
+    parsed_skills = []
+    sentences = [ # tokenize by sentences and also \n then replace out &nbsp; and trim
+        sentence.replace(u'\xa0', u' ').strip()
+        for s in nltk.sent_tokenize(job_post)
+        for sentence in s.lower().split('\n')
+    ]
+    for sentence in sentences:
+        if len(sentence):
+            words = [w for ws in POST_TOKENIZER.tokenize(sentence) for w in ws.split()]
+
+            line_skills = []
+            for word in words:
+                if word in SKILLS:
+                    line_skills.append(word)
+
+            if line_skills:
+                parsed_skills.append(line_skills)
+
+    return parsed_skills
+
+def count_words(job_post, job_posts_word_count):
+    sentences = [ # tokenize by sentences and also \n then replace out &nbsp; and trim
+        sentence.replace(u'\xa0', u' ').strip()
+        for s in nltk.sent_tokenize(job_post)
+        for sentence in s.lower().split('\n')
+    ]
+    for sentence in sentences:
+        if len(sentence):
+            words = [w for ws in POST_TOKENIZER.tokenize(sentence) for w in ws.split()]
+
+            if SKILLS and not any([word in SKILLS for word in words]):
+                continue
+                
+            else:
+                for word in words:
+                    if word not in STOP_WORDS:
+                        if word in job_posts_word_count:
+                            job_posts_word_count[word] += 1
+                        else:
+                            job_posts_word_count[word] = 1
+
+def retrieve_mongo_jobs():
     connection = MongoClient(CONNECTION_STRING)
     jobsDB = connection["JobSearchDB"]
     jobsCollection = jobsDB["jobs"]
-    jobs = jobsCollection.find()
+    return jobsCollection.find()
 
-    # Define the regular expression pattern for tokenization
-    pattern = r"\s*[-,()]+\s*|\s*\.\s+|\s*\.$"
+def parse_jobs():
+    jobs = retrieve_mongo_jobs()
 
-    # Create a RegexpTokenizer with the defined pattern
-    name_tokenizer = RegexpTokenizer(pattern, True)
-
-    # Tokenize the input text
     phrase_counter = {}
-    jobs_count = 0
-    job_posts = []
+    job_posts_word_count = {}
+    likes = [0,0,0] # dislike, not rated, liked
     for job in jobs:
-        jobs_count += 1
-        positionTokenSplit = name_tokenizer.tokenize(job["position"])
-        job_posts.append(job["fullJobPost"])
-        for token in positionTokenSplit:
-            words = token.lower().split()
-            words = list(filter(lambda x: x not in IGNORED_WORDS, words))
-            for i in range(len(words)):
-                for j in range(1, min(5, len(words) - i + 1)): # Consider phrases of length 1 to 4 words
-                    phrase = ' '.join(words[i:i+j])
-                    if phrase in phrase_counter:
-                        phrase_counter[phrase] += 1
-                    else:
-                        phrase_counter[phrase] = 1
-                    
-    phrase_counter = list(filter(lambda x: occurrence_cutoff(x[0], x[1], jobs_count), phrase_counter.items()))
-    phrase_counter.sort(key=lambda x: x[1])
+        if "liked" in job:
+            liked = job["liked"]
+            if liked == True:
+                likes[2] += 1
+                liked = 1
+            else:
+                likes[0] += 1
+                liked = -1
+        else:
+            likes[1] += 1
+            liked = 0
+
+        phrases = parse_job_titles_by_phrases(job["position"])
+        for phrase in phrases:
+            if phrase in phrase_counter:
+                phrase_counter[phrase][1+liked] += 1
+            else:
+                like_counts = [0,0,0]
+                like_counts[1+liked] += 1
+                phrase_counter[phrase] = like_counts
+            
+        parsed_skill = parse_job_posts_by_skills(job["fullJobPost"])
+        # use for inirially finding skill words from job posts
+        count_words(job["fullJobPost"], job_posts_word_count)
+        
+    jobs_count = sum(likes)
+    phrase_counter = list(filter(lambda x: occurrence_cutoff(x[0], sum(x[1]), jobs_count), phrase_counter.items()))
+    phrase_counter.sort(key=lambda x: sum(x[1]))
     pprint(phrase_counter[-50:])
     
-    # Define the regular expression pattern for tokenization
-    pattern = r"\s*[-/,();:&]+\s*|\s*[!?.]$"
+    for skill in SKILLS:
+        if skill in job_posts_word_count:
+            del job_posts_word_count[skill]
 
-    # Create a RegexpTokenizer with the defined pattern
-    post_tokenizer = RegexpTokenizer(pattern, True)
-
-    job_post_word_count = {}
-    stop_words = stopwords.words('english')
-    skills = set(GOOD_SKILLS + NEUTRAL_SKILLS + BAD_SKILLS)
-    for post in job_posts:
-        sentences = [
-            sentence.replace(u'\xa0', u' ').strip()
-            for s in nltk.sent_tokenize(post)
-            for sentence in s.lower().split('\n')
-        ]
-        for sentence in sentences:
-            if len(sentence):
-                words = [w for ws in post_tokenizer.tokenize(sentence) for w in ws.split()]
-                if not any([word in skills for word in words]):
-                    continue
-                
-                for word in words:
-                    if word not in stop_words:
-                        if word in job_post_word_count:
-                            job_post_word_count[word] += 1
-                        else:
-                            job_post_word_count[word] = 1
-    
-    for skill in skills:
-        if skill in job_post_word_count:
-            del job_post_word_count[skill]
-
-    job_post_word_count = list(job_post_word_count.items())
-    job_post_word_count.sort(key=lambda x: x[1])
-    print(len(job_post_word_count))
-    pprint(job_post_word_count[-600:])
+    job_posts_word_count = list(job_posts_word_count.items())
+    job_posts_word_count.sort(key=lambda x: x[1])
+    print(len(job_posts_word_count))
+    pprint(job_posts_word_count[-20:])
 
 if __name__ == "__main__":
-    mongo_connect()
+    parse_jobs()

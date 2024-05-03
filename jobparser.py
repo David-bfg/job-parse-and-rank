@@ -5,7 +5,7 @@ import nltk
 # nltk.download('stopwords') # uncomment on first run to get download
 from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
-# from fastai.tabular.all import *
+from fastai.tabular.all import *
 import pandas as pd
 
 CONNECTION_STRING = "mongodb://<user>:<pass>@<host>/<DBName>"
@@ -296,7 +296,22 @@ def parse_jobs():
 
     dep_var = 'job_liked'
     df = pd.DataFrame(data, columns=[dep_var] + ml_phrases)
-    print(df)
+
+    # Split the data into training and validation sets
+    splits = RandomSplitter(valid_pct=0.2, seed=42)(range_of(df))
+
+    # Define a tabular data loader
+    to = TabularPandas(df, procs=[Categorify, FillMissing], y_names=dep_var, splits=splits)
+
+    # Define your model
+    dls = to.dataloaders(bs=64)
+
+    # Define and train the model
+    learn = tabular_learner(dls, metrics=accuracy)
+    learn.fine_tune(10)
+
+    # Evaluate your model on the validation set
+    learn.show_results()
 
 if __name__ == "__main__":
     parse_jobs()

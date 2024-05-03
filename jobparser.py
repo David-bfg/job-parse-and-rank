@@ -5,6 +5,8 @@ import nltk
 # nltk.download('stopwords') # uncomment on first run to get download
 from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
+# from fastai.tabular.all import *
+import pandas as pd
 
 CONNECTION_STRING = "mongodb://<user>:<pass>@<host>/<DBName>"
 STOP_WORDS = stopwords.words('english')
@@ -43,6 +45,8 @@ GOOD_PHRASES = [
  'software engineer', 'software engineering', 'software engineer ii', 'software engineer iii',
  'embedded software engineer', 'software development engineer',
 ]
+# all phrases from early set of liked/disliked jobs
+PERTINENT_PHRASES = [ 'software development engineer', 'full stack engineer', 'embedded software engineer', 'workflow design studio', 'machine learning engineer', 'full stack developer', 'principal application engineer', 'principal software engineer', 'salesforce devops admin', 'operations', 'analytics', 'embedded', 'infrastructure', 'solutions engineer', 'solution', 'react', 'development engineer', 'generative', 'generative ai', 'network engineer', 'hybrid', 'site reliability engineer', 'software engineer ii', 'eligible', 'automation', 'front', 'machine learning', 'machine', 'test engineer', 'design', 'learning', 'software developer', 'reliability engineer', 'platform engineer', 'director', 'network', 'systems engineer', 'site reliability', 'site', 'backend', 'staff software engineer', 'software engineer iii', 'engineering manager', 'staff software', 'back end', 'python', 'quality engineering', 'reliability', 'development', 'application engineer', 'ai', 'software engineering', 'aws', 'back', 'java', 'engineer iii', 'salesforce', 'solutions', 'lead software engineer', 'devops', 'test', 'lead software', 'associate', 'iii', 'application', 'quality', 'platform', 'engineer ii', 'systems', 'end', 'ii', 'remote', 'data engineer', 'cloud', 'staff', 'architect', 'principal', 'full stack', 'full', 'stack', 'manager', 'lead', 'engineering', 'developer', 'data', 'software engineer', 'software', 'engineer' ]
 NEUTRAL_SKILLS = [
  'sql',
  'azure',
@@ -228,6 +232,13 @@ def retrieve_mongo_jobs():
 
 def parse_jobs():
     jobs = retrieve_mongo_jobs()
+    ml_phrases = list(set(GOOD_PHRASES + BAD_PHRASES + PERTINENT_PHRASES))
+    data = []
+    num_conlumns = len(ml_phrases) + 1
+    data.append([0] * num_conlumns)
+    ml_phrase_index = {}
+    for i in range(1, num_conlumns):
+        ml_phrase_index[ml_phrases[i-1]] = i
 
     phrase_counter = {}
     job_posts_word_count = {}
@@ -246,6 +257,7 @@ def parse_jobs():
             liked = 0
 
         phrases = parse_job_titles_by_phrases(job["position"])
+        row = [0] * num_conlumns
         for phrase in phrases:
             if phrase in phrase_counter:
                 phrase_counter[phrase][1+liked] += 1
@@ -254,13 +266,23 @@ def parse_jobs():
                 like_counts[1+liked] += 1
                 phrase_counter[phrase] = like_counts
             
-        parsed_skill = parse_job_posts_by_skills(job["fullJobPost"])
-        # use for inirially finding skill words from job posts
+            if liked and phrase in ml_phrases:
+                    row[ml_phrase_index[phrase]] = 1
+
+        if liked:
+            if liked == 1:
+                row[0] = 1
+            data.append(row)
+            
+        # TODO: logic to rank skills and title phrases
+        post_skills = parse_job_posts_by_skills(job["fullJobPost"])
+        # use for initially finding skill words from job posts
         count_words(job["fullJobPost"], job_posts_word_count)
         
     jobs_count = sum(likes)
-    phrase_counter = list(filter(lambda x: occurrence_cutoff(x[0], sum(x[1]), jobs_count), phrase_counter.items()))
+    phrase_counter = list(filter(lambda x: x[1][0] + x[1][2] > 0 and occurrence_cutoff(x[0], sum(x[1]), jobs_count), phrase_counter.items()))
     phrase_counter.sort(key=lambda x: sum(x[1]))
+    # print(list(map(lambda x: x[0], phrase_counter)))
     pprint(phrase_counter[-50:])
     
     for skill in SKILLS:
@@ -271,6 +293,10 @@ def parse_jobs():
     job_posts_word_count.sort(key=lambda x: x[1])
     print(len(job_posts_word_count))
     pprint(job_posts_word_count[-20:])
+
+    dep_var = 'job_liked'
+    df = pd.DataFrame(data, columns=[dep_var] + ml_phrases)
+    print(df)
 
 if __name__ == "__main__":
     parse_jobs()

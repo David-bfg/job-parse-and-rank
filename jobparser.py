@@ -228,14 +228,16 @@ def retrieve_mongo_jobs():
     connection = MongoClient(CONNECTION_STRING)
     jobsDB = connection["JobSearchDB"]
     jobsCollection = jobsDB["jobs"]
-    return jobsCollection.find()
+    return jobsCollection, jobsCollection.find().sort('datePosted', -1)
 
 def parse_jobs():
-    jobs = retrieve_mongo_jobs()
+    jobsColl, jobs = retrieve_mongo_jobs()
     ml_phrases = list(set(GOOD_PHRASES + BAD_PHRASES + PERTINENT_PHRASES))
+    full_data = []
     data = []
     num_conlumns = len(ml_phrases) + 1
     data.append([False] * num_conlumns)
+    full_data = []
     ml_phrase_index = {}
     for i in range(1, num_conlumns):
         ml_phrase_index[ml_phrases[i-1]] = i
@@ -266,13 +268,15 @@ def parse_jobs():
                 like_counts[1+liked] += 1
                 phrase_counter[phrase] = like_counts
             
-            if liked and phrase in ml_phrases:
+            if phrase in ml_phrases:
                     row[ml_phrase_index[phrase]] = True
 
         if liked:
             if liked == 1:
                 row[0] = True
             data.append(row)
+        
+        full_data.append(row + [job['_id']])
             
         # TODO: logic to rank skills and title phrases
         post_skills = parse_job_posts_by_skills(job["fullJobPost"])
@@ -312,6 +316,18 @@ def parse_jobs():
 
     # Evaluate your model on the validation set
     learn.show_results()
+
+    fdf = pd.DataFrame(full_data, columns=[dep_var] + ml_phrases + ['_id'])
+
+    for elem in fdf.iloc:
+        _, _, probs = learn.predict(elem)
+        confidence = probs[1].item()
+
+        # TODO: update many function instead
+        jobsColl.update_one(
+            {'_id': elem['_id']},
+            {'$set': {'titleRanking': confidence}},
+        )
 
 if __name__ == "__main__":
     parse_jobs()

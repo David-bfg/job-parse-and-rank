@@ -235,7 +235,7 @@ def parse_jobs():
     ml_phrases = list(set(GOOD_PHRASES + BAD_PHRASES + PERTINENT_PHRASES))
     data = []
     num_conlumns = len(ml_phrases) + 1
-    data.append([0] * num_conlumns)
+    data.append([False] * num_conlumns)
     ml_phrase_index = {}
     for i in range(1, num_conlumns):
         ml_phrase_index[ml_phrases[i-1]] = i
@@ -257,7 +257,7 @@ def parse_jobs():
             liked = 0
 
         phrases = parse_job_titles_by_phrases(job["position"])
-        row = [0] * num_conlumns
+        row = [False] * num_conlumns
         for phrase in phrases:
             if phrase in phrase_counter:
                 phrase_counter[phrase][1+liked] += 1
@@ -267,11 +267,11 @@ def parse_jobs():
                 phrase_counter[phrase] = like_counts
             
             if liked and phrase in ml_phrases:
-                    row[ml_phrase_index[phrase]] = 1
+                    row[ml_phrase_index[phrase]] = True
 
         if liked:
             if liked == 1:
-                row[0] = 1
+                row[0] = True
             data.append(row)
             
         # TODO: logic to rank skills and title phrases
@@ -301,14 +301,14 @@ def parse_jobs():
     splits = RandomSplitter(valid_pct=0.2, seed=42)(range_of(df))
 
     # Define a tabular data loader
-    to = TabularPandas(df, procs=[Categorify, FillMissing], y_names=dep_var, splits=splits)
+    to = TabularPandas(df, procs=[Categorify, FillMissing], cat_names = ml_phrases, y_names=dep_var, splits=splits)
 
     # Define your model
     dls = to.dataloaders(bs=64)
 
     # Define and train the model
     learn = tabular_learner(dls, metrics=accuracy)
-    learn.fine_tune(10)
+    learn.fine_tune(52)
 
     # Evaluate your model on the validation set
     learn.show_results()

@@ -1,4 +1,4 @@
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 from pprint import pprint
 import nltk
 # nltk.download('punkt') # uncomment on first run to get download
@@ -236,7 +236,9 @@ def parse_jobs():
     full_data = []
     data = []
     num_conlumns = len(ml_phrases) + 1
-    data.append([False] * num_conlumns)
+    # Base case of failing zero phrases matched
+    for _ in range(20):# average of 4 chosen for training set
+        data.append([False] * num_conlumns)
     full_data = []
     ml_phrase_index = {}
     for i in range(1, num_conlumns):
@@ -275,8 +277,8 @@ def parse_jobs():
             if liked == 1:
                 row[0] = True
             data.append(row)
-        
-        full_data.append(row + [job['_id']])
+        else:
+            full_data.append(row + [job['_id']])
             
         # TODO: logic to rank skills and title phrases
         post_skills = parse_job_posts_by_skills(job["fullJobPost"])
@@ -319,15 +321,18 @@ def parse_jobs():
 
     fdf = pd.DataFrame(full_data, columns=[dep_var] + ml_phrases + ['_id'])
 
-    for elem in fdf.iloc:
-        _, _, probs = learn.predict(elem)
-        confidence = probs[1].item()
+    dl = learn.dls.test_dl(fdf)
+    predictions = learn.get_preds(dl=dl)
 
-        # TODO: update many function instead
-        jobsColl.update_one(
-            {'_id': elem['_id']},
-            {'$set': {'titleRanking': confidence}},
-        )
+    updates = []
+
+    for i in range(len(fdf.iloc)):
+        updates.append(UpdateOne(
+            {'_id': fdf.iloc[i]['_id']},
+            {'$set': {'titleRanking': predictions[i][1]}},
+        ))
+
+    jobsColl.bulk_write(updates)
 
 if __name__ == "__main__":
     parse_jobs()

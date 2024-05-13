@@ -7,10 +7,12 @@ from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
 from fastai.tabular.all import *
 import pandas as pd
+import os
 
 from job_word_lists import *
 
-CONNECTION_STRING = "mongodb://<user>:<pass>@<host>/<DBName>"
+CONNECTION_STRING = "mongodb://%s:%s@%s:27017/%s" % (os.environ["MONGO_USER"],
+    os.environ["MONGO_PASS"], os.environ["MONGO_HOST"], os.environ["MONGO_DB_NAME"])
 STOP_WORDS = stopwords.words('english')
 IGNORED_WORDS = IGNOREABLE_WORDS + STOP_WORDS
 SKILLS = set(GOOD_SKILLS + NEUTRAL_SKILLS + BAD_SKILLS)

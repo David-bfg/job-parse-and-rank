@@ -1,3 +1,4 @@
+import sys
 import cloudscraper
 
 def cloud_scrape():

@@ -202,10 +202,10 @@ def parse_jobs():
 
     updates = []
 
-    for i in range(len(fdf.iloc)):
+    for i, row in fdf.iterrows():
         updates.append(UpdateOne(
-            {'_id': fdf.iloc[i]['_id']},
-            {'$set': {'titleRanking': predictions[i][1]}},
+            {'_id': row['_id']},
+            {'$set': {'titleRanking': float(predictions[0][i][1])}},
         ))
 
     jobsColl.bulk_write(updates)

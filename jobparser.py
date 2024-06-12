@@ -109,13 +109,12 @@ def retrieve_mongo_jobs():
 def parse_jobs():
     jobsColl, jobs = retrieve_mongo_jobs()
     ml_phrases = list(set(GOOD_PHRASES + BAD_PHRASES + PERTINENT_PHRASES))
-    full_data = []
+    process_data_set = []
     data = []
     num_conlumns = len(ml_phrases) + 1
     # Base case of failing zero phrases matched
     for _ in range(20):# average of 4 chosen for training set
         data.append([False] * num_conlumns)
-    full_data = []
     ml_phrase_index = {}
     for i in range(1, num_conlumns):
         ml_phrase_index[ml_phrases[i-1]] = i
@@ -153,8 +152,8 @@ def parse_jobs():
             if liked == 1:
                 row[0] = True
             data.append(row)
-        else:
-            full_data.append(row + [job['_id']])
+        elif "titleRanking" not in job:
+            process_data_set.append(row + [job['_id']])
             
         # TODO: logic to rank skills and title phrases
         post_skills = parse_job_posts_by_skills(job["fullJobPost"])
@@ -195,7 +194,7 @@ def parse_jobs():
     # Evaluate your model on the validation set
     learn.show_results()
 
-    fdf = pd.DataFrame(full_data, columns=[dep_var] + ml_phrases + ['_id'])
+    fdf = pd.DataFrame(process_data_set, columns=[dep_var] + ml_phrases + ['_id'])
 
     dl = learn.dls.test_dl(fdf)
     predictions = learn.get_preds(dl=dl)
@@ -204,7 +203,7 @@ def parse_jobs():
 
     for i, row in fdf.iterrows():
         updates.append(UpdateOne(
-            {'_id': row['_id']},
+            {'_id': row['_id'], 'titleRanking': {'$exists' : False}},
             {'$set': {'titleRanking': float(predictions[0][i][1])}},
         ))
 
